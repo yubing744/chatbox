@@ -18,7 +18,7 @@ export async function replay(
     msgs: Message[],
     onText?: (option: OnTextCallbackResult) => void,
     onError?: (error: Error) => void,
-) {
+): Promise<string> {
     if (msgs.length === 0) {
         throw new Error('No messages to replay')
     }
@@ -92,13 +92,16 @@ export async function replay(
         // do not throw an exception
         // otherwise the content will be overwritten.
         if (hasCancel) {
-            return;
+            return "";
         }
+
         if (onError) {
             onError(error as any)
         }
+
         throw error
     }
+    
     return fullText
 }
 

@@ -1,4 +1,5 @@
-import { Message, createMessage, Plugin } from './types';
+import { Message, createMessage, Plugin, Agent, OpenAIRoleEnum } from './types';
+import * as prompts from './prompts';
 
 export interface QueryResult {
   results: Array<{
@@ -21,23 +22,30 @@ export interface QueryResult {
 }
 
 export async function applyPlugins(
+  agent: Agent,
   plugins: Plugin[],
-  pluginIDs: string[],
-  userMsg: Message
+  promptMsgs: Message[],
 ): Promise<Message> {
-  let pluginMsg = createMessage("system", "")
+  let pluginMsg = createMessage(OpenAIRoleEnum.System, "")
   pluginMsg.tags = ["plugin_content"]
 
-  console.log("applyPlugins plugins:", plugins, "pluginIDs:", pluginIDs)
+  console.log("applyPlugins:", plugins)
 
-  let ret = plugins.filter((plugin: Plugin) => {return pluginIDs.indexOf(plugin.id) >= 0})
-  console.log("applyPlugins return:", ret)
+  let question = await summayQuestion(agent, promptMsgs)
+  console.log("summay question:", question)
 
-  if (ret && ret.length>0) {
-    let content = await applyPlugin(ret[0], userMsg)
+  let plugin = await selectPlugin(agent, plugins, question)
+  console.log("select plugin:", plugin)
+
+  if (plugin) {
+    let content = await applyPlugin(agent, plugin, question)
     if (content) {
       pluginMsg.content = `可以参考插件获取的如下内容回复用户问题，内容如下：${content}`
+    } else {
+      pluginMsg.content = "插件没有相关信息"
     }
+  } else {
+    pluginMsg.content = "没有相关的插件"
   }
 
   console.log("pluginMsg:", pluginMsg)
@@ -45,9 +53,33 @@ export async function applyPlugins(
   return pluginMsg
 }
 
+export async function summayQuestion(
+  agent: Agent,
+  msgs: Message[],
+): Promise<string> {
+  let promptMsgs = prompts.summayQuestion(msgs)
+  console.log("promptMsgs:", promptMsgs)
+
+  let summay = await agent.replay(promptMsgs)
+  return summay
+}
+
+export async function selectPlugin(
+  agent: Agent,
+  plugins: Plugin[],
+  question: string
+): Promise<Plugin | null> {
+  if (plugins && plugins.length > 0) {
+    return plugins[0]
+  }
+
+  return null
+}
+
 export async function applyPlugin(
+  agent: Agent,
   plugin: Plugin,
-  userMsg: Message
+  text: string
 ): Promise<string> {
   try {
     const response = await fetch(`${plugin.api.url}/sub/query`, {
@@ -59,7 +91,7 @@ export async function applyPlugin(
       body: JSON.stringify({
         "queries": [
           {
-            "query": userMsg.content,
+            "query": text,
             "top_k": 5
           }
         ]
@@ -73,7 +105,7 @@ export async function applyPlugin(
     let msgContent = '';
 
     const result = await response.json() as QueryResult
-    console.log("query result:", result)
+    console.log("applyPlugin result:", result)
 
     if (result && result.results) {
       for (let chunk of result.results[0].results) {

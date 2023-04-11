@@ -15,6 +15,10 @@ export function messageHasTag(msg: Message, tag: string = "Untitled"): boolean {
     return msg.tags.indexOf(tag) > -1
 }
 
+export interface Agent {
+    replay(msgs: Message[]): Promise<string>
+}
+
 export interface Plugin {
     id: string;
     schema_version: string;

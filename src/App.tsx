@@ -8,7 +8,7 @@ import {
     IconButton, Button, Stack, Grid, MenuItem, ListItemIcon, Typography, Divider,
     TextField,
 } from '@mui/material';
-import { Session, createSession, Message, createMessage } from './types'
+import { Session, createSession, Message, createMessage, Plugin } from './types'
 import useStore from './store'
 import SettingWindow from './SettingWindow'
 import ChatConfigWindow from './ChatConfigWindow'
@@ -23,7 +23,8 @@ import * as api from './api';
 import { ThemeSwitcherProvider } from './theme/ThemeSwitcher';
 import { useTranslation } from "react-i18next";
 import icon from './icon.png'
-import { applyPlugins } from './pluginTasks';
+import { ChatGPTAgent } from "./agent"
+import { applyPlugins } from './plugin';
 
 const { useEffect, useState } = React
 
@@ -157,56 +158,27 @@ function Main() {
     }
 
     const generate = async (session: Session, promptMsgs: Message[], targetMsg: Message) => {
-        messageScrollRef.current = { msgId: targetMsg.id, smooth: false }
-        await client.replay(
-            store.settings.openaiKey,
-            store.settings.apiHost,
-            store.settings.maxContextSize,
-            store.settings.maxTokens,
-            session.model,
-            promptMsgs,
-            ({ text, cancel }) => {
-                for (let i = 0; i < session.messages.length; i++) {
-                    if (session.messages[i].id === targetMsg.id) {
-                        session.messages[i] = {
-                            ...session.messages[i],
-                            content: text,
-                            cancel,
-                        }
+        const pluginIDs = session.pluginIDs;
+        if (pluginIDs && pluginIDs.length > 0) {
+            targetMsg.content = "正在收集信息..."
 
-                        break;
-                    }
+            let agent = new ChatGPTAgent(store.settings, session.model)
+            let plugins = store.plugins.filter((plugin: Plugin) => { return pluginIDs.indexOf(plugin.id) >= 0 })
+
+            try {
+                let pluginMsg = await applyPlugins(agent, plugins, promptMsgs)
+                if (pluginMsg) {
+                    promptMsgs = promptMsgs.slice(0, promptMsgs.length - 2).concat(pluginMsg, promptMsgs[promptMsgs.length - 1])
                 }
-                store.updateChatSession(session)
-            },
-            (err) => {
-                for (let i = 0; i < session.messages.length; i++) {
-                    if (session.messages[i].id === targetMsg.id) {
-                        session.messages[i] = {
-                            ...session.messages[i],
-                            content: t('api request failed:') + ' \n```\n' + err.message + '\n```',
-                        }
-                        break
-                    }
-                }
-                store.updateChatSession(session)
+
+                targetMsg.content = "正在生成结果..."
+            } catch (err: any) {
+                targetMsg.content = 'api request failed:' + ' \n```\n' + err.message + '\n```';
+                return
             }
-        )
-        messageScrollRef.current = null
-    }
-
-    const generateWithPlugins = async (session: Session, pluginIDs: string[], promptMsgs: Message[], targetMsg: Message) => {
-        messageScrollRef.current = { msgId: targetMsg.id, smooth: false }
-
-        targetMsg.content = "正在收集信息..."
-
-        let pluginMsg = await applyPlugins(store.plugins, pluginIDs, promptMsgs[promptMsgs.length - 1])
-        if (pluginMsg) {
-            promptMsgs = promptMsgs.slice(0, promptMsgs.length - 2).concat(pluginMsg, promptMsgs[promptMsgs.length - 1])
         }
 
-        targetMsg.content = "正在生成结果..."
-
+        messageScrollRef.current = { msgId: targetMsg.id, smooth: false }
         await client.replay(
             store.settings.openaiKey,
             store.settings.apiHost,
@@ -398,7 +370,7 @@ function Main() {
                                     <ChatBubbleOutlineOutlinedIcon />
                                 </IconButton>
                                 <Typography variant="h6" color="inherit" component="div" noWrap sx={{ flexGrow: 1 }}>
-                                    <span onClick={()=>{editCurrentSession()}} style={{cursor: 'pointer'}}>
+                                    <span onClick={() => { editCurrentSession() }} style={{ cursor: 'pointer' }}>
                                         {store.currentSession.name}
                                     </span>
                                 </Typography>
@@ -481,12 +453,8 @@ function Main() {
                                         store.currentSession.messages = [...store.currentSession.messages, newUserMsg, newAssistantMsg]
                                         store.updateChatSession(store.currentSession)
 
-                                        if (store.currentSession.pluginIDs && store.currentSession.pluginIDs.length>0) {
-                                            generateWithPlugins(store.currentSession, store.currentSession.pluginIDs, promptsMsgs, newAssistantMsg)
-                                        } else {
-                                            generate(store.currentSession, promptsMsgs, newAssistantMsg)
-                                        }
-                                        
+                                        generate(store.currentSession, promptsMsgs, newAssistantMsg)
+
                                         messageScrollRef.current = { msgId: newAssistantMsg.id, smooth: true }
                                     } else {
                                         store.currentSession.messages = [...store.currentSession.messages, newUserMsg]
